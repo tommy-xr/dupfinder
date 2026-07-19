@@ -11,6 +11,7 @@ mod clones;
 mod embedder;
 mod extract;
 mod gitdiff;
+mod skill;
 mod store;
 
 #[derive(Parser)]
@@ -72,6 +73,15 @@ enum Cmd {
         #[arg(long, default_value_t = 5)]
         min_lines: u32,
     },
+    /// Install the bundled `review-for-duplicates` Claude Code skill
+    InstallSkill {
+        /// Install into ./.claude/skills instead of ~/.claude/skills
+        #[arg(long)]
+        project: bool,
+        /// Explicit skills directory (overrides the default location)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -87,6 +97,7 @@ fn main() -> Result<()> {
         }
         Cmd::Clones { path } => cmd_clones(&path),
         Cmd::Review { path, base, top, min_lines } => cmd_review(&path, base, top, min_lines),
+        Cmd::InstallSkill { project, dir } => skill::install(project, dir),
     }
 }
 

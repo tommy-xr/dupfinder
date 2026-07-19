@@ -43,11 +43,31 @@ dupfinder review [DIR] [--base origin/main] [--top 3] [--min-lines 5]
     # review the current change: token clones touching the diff + the most
     # similar existing functions for each changed function. Base defaults to
     # origin/main / origin/master / main / master, first that exists.
+
+dupfinder install-skill [--project] [--dir DIR]
+    # install the bundled `review-for-duplicates` Claude Code skill.
+    # default target ~/.claude/skills; --project writes ./.claude/skills;
+    # --dir overrides the location. Re-run to update.
 ```
 
 `review` is the CI/review-time entry point: its markdown output is designed to be handed
 to a reviewer (human or LLM) as evidence — "this changed function closely resembles X;
 should it reuse it?"
+
+## Claude Code skill
+
+dupfinder bundles a [Claude Code](https://claude.com/claude-code) skill,
+`review-for-duplicates`, that drives `dupfinder review` and turns its output into a
+judged, severity-ranked duplication review. Install it after `cargo install`:
+
+```sh
+dupfinder install-skill              # ~/.claude/skills (all projects)
+dupfinder install-skill --project    # ./.claude/skills (this repo only)
+```
+
+The skill source lives in [`skills/review-for-duplicates/`](skills/review-for-duplicates/)
+and is embedded in the binary, so `install-skill` always writes the version matching your
+installed `dupfinder`.
 
 ## Reading similarity numbers
 
