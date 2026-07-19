@@ -153,6 +153,13 @@ pub fn build_or_update(root: &Path) -> Result<Store> {
         for group in groups {
             let texts: Vec<String> = group.iter().map(|&i| ex.fns[i].embed_text()).collect();
             let embedded = crate::embedder::embed(texts)?;
+            if embedded.len() != group.len() {
+                bail!(
+                    "embedder returned {} vectors for {} inputs",
+                    embedded.len(),
+                    group.len()
+                );
+            }
             done += group.len();
             for (&slot, v) in group.iter().zip(embedded) {
                 vectors[slot] = Some(v);

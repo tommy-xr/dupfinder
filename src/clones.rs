@@ -15,12 +15,13 @@ pub struct TokenClone {
 }
 
 impl TokenClone {
-    /// jscpd reports paths relative to each scanned root, so match on suffix.
+    /// jscpd reports paths relative to each scanned root, so match on a
+    /// path-component-anchored suffix ("store.rs" must not match "restore.rs").
     pub fn touches(&self, repo_rel_file: &str) -> bool {
-        repo_rel_file.ends_with(&self.file_a)
-            || repo_rel_file.ends_with(&self.file_b)
-            || self.file_a.ends_with(repo_rel_file)
-            || self.file_b.ends_with(repo_rel_file)
+        fn suffix_match(a: &str, b: &str) -> bool {
+            a == b || a.ends_with(&format!("/{b}")) || b.ends_with(&format!("/{a}"))
+        }
+        suffix_match(repo_rel_file, &self.file_a) || suffix_match(repo_rel_file, &self.file_b)
     }
 }
 

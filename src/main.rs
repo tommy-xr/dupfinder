@@ -167,8 +167,8 @@ fn cmd_similar(root: &Path, threshold: f32, top: usize, min_lines: u32, include_
     for (a, &i) in keep.iter().enumerate() {
         for &j in &keep[a + 1..] {
             let (ri, rj) = (&st.records[i], &st.records[j]);
-            // Skip a function overlapping itself across near-identical ranges.
-            if ri.file == rj.file && ri.start.abs_diff(rj.start) < 5 {
+            // Overlapping ranges in one file = nested/self extraction, not a pair.
+            if ri.file == rj.file && ri.start <= rj.end && rj.start <= ri.end {
                 continue;
             }
             let s = embedder::dot(&st.vectors[i], &st.vectors[j]);
@@ -269,7 +269,8 @@ fn cmd_review(root: &Path, base: Option<String>, top: usize, min_lines: u32) -> 
             .enumerate()
             .filter(|(j, _)| {
                 let o = &st.records[*j];
-                !(o.file == r.file && o.start.abs_diff(r.start) < 5)
+                // Skip self and anything overlapping it (nested extraction).
+                *j != i && !(o.file == r.file && o.start <= r.end && r.start <= o.end)
             })
             .map(|(j, v)| (embedder::dot(&st.vectors[i], v), j))
             .collect();

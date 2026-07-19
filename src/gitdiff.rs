@@ -39,9 +39,12 @@ pub fn resolve_base(root: &Path, explicit: Option<String>) -> Result<String> {
 /// Ranges of NEW/CHANGED lines per file: merge-base(base, HEAD) -> working tree,
 /// plus whole-file ranges for untracked files.
 pub fn changed_ranges(root: &Path, base: &str) -> Result<ChangedRanges> {
-    // `git diff A...` diffs merge-base(A, HEAD) against the working tree, so
-    // committed and uncommitted edits are both in scope.
-    let diff = git(root, &["diff", "-U0", "--no-color", &format!("{base}...")])?;
+    // `--merge-base` (git >= 2.30) diffs merge-base(base, HEAD) against the
+    // WORKING TREE, so committed and uncommitted edits are both in scope and
+    // line numbers match the files extract_dir reads. (The tempting
+    // `git diff base...` form stops at HEAD — uncommitted edits vanish and
+    // ranges go stale against the worktree.)
+    let diff = git(root, &["diff", "-U0", "--no-color", "--merge-base", base])?;
     let mut ranges: ChangedRanges = BTreeMap::new();
     let mut current: Option<String> = None;
     for line in diff.lines() {

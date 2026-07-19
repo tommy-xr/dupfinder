@@ -74,6 +74,10 @@ fn truncate_chars(s: &str, max: usize) -> &str {
     }
 }
 
+fn clip_doc(s: String) -> String {
+    truncate_chars(&s, 300).to_string()
+}
+
 pub fn fnv1a(bytes: &[u8]) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
     for &b in bytes {
@@ -192,9 +196,7 @@ fn rust_doc_before(node: Node, src: &str) -> String {
         sib = s.prev_named_sibling();
     }
     parts.reverse();
-    let mut doc = parts.join(" ");
-    doc.truncate(doc.char_indices().nth(300).map_or(doc.len(), |(i, _)| i));
-    doc
+    clip_doc(parts.join(" "))
 }
 
 fn rust_context(node: Node, src: &str) -> String {
@@ -301,9 +303,7 @@ fn ts_doc_before(node: Node, src: &str) -> String {
                     .filter(|l| !l.is_empty())
                     .collect::<Vec<_>>()
                     .join(" ");
-                let mut doc = cleaned;
-                doc.truncate(doc.char_indices().nth(300).map_or(doc.len(), |(i, _)| i));
-                return doc;
+                return clip_doc(cleaned);
             }
             return String::new();
         }
