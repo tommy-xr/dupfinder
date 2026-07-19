@@ -1,0 +1,21 @@
+[package]
+name = "dupfinder"
+version = "0.1.0"
+edition = "2021"
+description = "Find duplicated and semantically-similar code across Rust, TypeScript, and Functor Lang — API indexing, local code embeddings, and token-clone detection for LLM-assisted code review."
+license = "MIT"
+repository = "https://github.com/tommy-xr/dupfinder"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+fastembed = "4"
+ignore = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tree-sitter = "0.24"
+tree-sitter-rust = "0.23"
+tree-sitter-typescript = "0.23"
+
+[profile.release]
+lto = true
