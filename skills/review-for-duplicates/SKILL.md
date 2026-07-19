@@ -1,13 +1,15 @@
 ---
 name: review-for-duplicates
 description: >-
-  Duplication-focused review of the current change using the dupfinder CLI:
-  token-level copy-paste clones (jscpd) plus embedding-based semantic
+  Duplication detection and reuse discovery via the dupfinder CLI. Two moments:
+  PREVENTION — before writing a new function/helper, or when asked "does
+  something already exist for X?", grep the `dupfinder index` API summary so a
+  duplicate is never written. DETECTION — `dupfinder review` checks a change
+  for token-level copy-paste clones (jscpd) plus embedding-based semantic
   similarity ("this new function closely resembles an existing one — reuse
-  it?"). Use when asked to check a change or codebase for duplication, before
-  extracting shared helpers, or as the duplication step inside a larger
-  review. Also supports whole-repo duplication audits via `dupfinder similar`
-  and reuse discovery via `dupfinder index`.
+  it?"). Use when about to add a helper, when checking a change or codebase for
+  duplication, before extracting shared helpers, or as the duplication step
+  inside a larger review. Also supports whole-repo audits via `dupfinder similar`.
 ---
 
 # review-for-duplicates
@@ -16,9 +18,37 @@ Evidence-driven duplication review. The `dupfinder` CLI supplies deterministic
 evidence (token clones + embedding neighbors); your job is judgment — deciding
 which findings warrant reuse/extraction and which duplication is acceptable.
 
+dupfinder serves two moments, and both matter:
+
+- **Prevention (before writing code)** — `dupfinder index` emits a greppable
+  summary of every existing function/type. Grepping it for the domain terms of
+  the helper you're about to write is the highest-leverage move: it stops a
+  duplicate from being written at all, rather than catching it afterward. See
+  [Prevention](#prevention--before-writing-new-code) below. Reach for this
+  whenever you're about to add a helper, or are asked "is there already
+  something for X?".
+- **Detection (after writing code)** — `dupfinder review` compares a change
+  against the codebase. This is the bulk of the skill (Steps 1–3).
+
 This skill ships with dupfinder itself. Install/update it with
 `dupfinder install-skill` (writes to `~/.claude/skills/`) or
 `dupfinder install-skill --project` (writes to `./.claude/skills/`).
+
+## Prevention — before writing new code
+
+Before adding a function/helper (or when asked what already exists), generate
+the API index and grep it for the concepts you're about to implement:
+
+```sh
+dupfinder index <repo-root> --out /tmp/api-index.md
+grep -i -E 'atomic|temp.?file|rename' /tmp/api-index.md   # terms of the helper you're about to write
+```
+
+Each hit is `signature — doc first-sentence  (file:line)`. If something already
+does the job, use or extend it instead of writing a new one — and say so. The
+index is cheap (no embeddings, just extraction), so run it freely. This is the
+single most effective step against re-implementing existing logic; prefer it
+over writing-then-detecting whenever you know new code is coming.
 
 ## Step 0 — Locate dupfinder
 
@@ -83,11 +113,9 @@ similarity + your read), and the concrete recommendation (reuse X / extract to
 Y / accept because Z). If nothing survives judgment, say "no actionable
 duplication" plainly — with the scan sizes so it's clear the check ran.
 
-## Other modes
+## Whole-repo audit
 
-- **Whole-repo audit** (asked to "find duplication in the codebase"):
-  `dupfinder similar <root> --threshold 0.9 --top 40` and judge pairs the same
-  way.
-- **Reuse discovery / prevention** (before writing new helpers, or asked
-  "what's already available"): `dupfinder index <root>` emits the greppable API
-  summary; grep it for the domain terms of the code about to be written.
+Asked to "find duplication in the codebase" (no specific change in scope):
+`dupfinder similar <root> --threshold 0.9 --top 40` and judge the pairs the same
+way as Step 2. For prevention/reuse-discovery before writing new code, see
+[Prevention](#prevention--before-writing-new-code) above.
