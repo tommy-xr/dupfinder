@@ -11,6 +11,7 @@ mod clones;
 mod embedder;
 mod extract;
 mod gitdiff;
+mod names;
 mod skill;
 mod store;
 
@@ -58,6 +59,28 @@ enum Cmd {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Lexical prior-art search: rank existing fns/types by identifier-token
+    /// (Jaccard) similarity to what a change adds. No embeddings — milliseconds.
+    Names {
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Base ref (default: origin/main, origin/master, main, or master)
+        #[arg(long)]
+        base: Option<String>,
+        /// Score a bare identifier instead of the git diff (repeatable).
+        /// Use before writing the function, when there is nothing to diff yet.
+        #[arg(long = "name")]
+        names: Vec<String>,
+        /// Candidates to list per query
+        #[arg(long, default_value_t = 5)]
+        top: usize,
+        /// Hide candidates scoring below this (0.0-1.0)
+        #[arg(long, default_value_t = 0.3)]
+        min_score: f32,
+        /// Include test functions as candidates
+        #[arg(long)]
+        include_tests: bool,
+    },
     /// Duplication review of the current change vs a base ref:
     /// token clones touching the diff + similar existing code per changed function
     Review {
@@ -96,6 +119,9 @@ fn main() -> Result<()> {
             cmd_similar(&path, threshold, top, min_lines, include_tests)
         }
         Cmd::Clones { path } => cmd_clones(&path),
+        Cmd::Names { path, base, names, top, min_score, include_tests } => {
+            cmd_names(&path, base, &names, top, min_score, include_tests)
+        }
         Cmd::Review { path, base, top, min_lines } => cmd_review(&path, base, top, min_lines),
         Cmd::InstallSkill { project, dir } => skill::install(project, dir),
     }
@@ -213,6 +239,92 @@ fn cmd_clones(root: &Path) -> Result<()> {
                 );
             }
         }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- names
+
+fn cmd_names(
+    root: &Path,
+    base: Option<String>,
+    query_names: &[String],
+    top: usize,
+    min_score: f32,
+    include_tests: bool,
+) -> Result<()> {
+    let ex = extract::extract_dir(root)?;
+    let all = names::candidates(&ex);
+
+    // Query set: explicit --name identifiers, else whatever the diff touches.
+    let queries: Vec<names::Candidate> = if !query_names.is_empty() {
+        query_names.iter().map(|n| names::query_from_name(n)).collect()
+    } else {
+        let base = gitdiff::resolve_base(root, base)?;
+        let changed = gitdiff::changed_ranges(root, &base)?;
+        println!("Base: `{base}` — {} changed file(s)\n", changed.len());
+        all.iter()
+            .filter(|c| {
+                // Test code is not prior art worth deduping against, and a test
+                // is not worth asking about either.
+                (include_tests || !c.testish)
+                    && changed.get(&c.file).is_some_and(|r| gitdiff::overlaps(r, c.start, c.end))
+            })
+            .cloned()
+            .collect()
+    };
+
+    if queries.is_empty() {
+        println!("Nothing to check (no changed fns/types, and no --name given).");
+        return Ok(());
+    }
+
+    println!(
+        "# lexical prior art ({} quer{}, {} candidates, min-score {min_score})\n",
+        queries.len(),
+        if queries.len() == 1 { "y" } else { "ies" },
+        all.len()
+    );
+    println!("Token-overlap only — a rewrite sharing no words scores 0 here. Read the candidate before calling it a duplicate.\n");
+
+    let mut any = false;
+    for q in &queries {
+        let mut hits: Vec<(f32, f32, f32, &names::Candidate)> = all
+            .iter()
+            .filter(|c| {
+                // Skip the query itself and anything overlapping it.
+                (include_tests || !c.testish)
+                    && !(c.file == q.file && c.start <= q.end && q.start <= c.end)
+            })
+            .map(|c| {
+                let (s, n, t) = names::score(q, c);
+                (s, n, t, c)
+            })
+            .filter(|(s, ..)| *s >= min_score)
+            .collect();
+        hits.sort_by(|a, b| b.0.total_cmp(&a.0));
+        hits.truncate(top);
+        if hits.is_empty() {
+            continue;
+        }
+        any = true;
+        if q.kind == "query" {
+            println!("### `{}`", q.name);
+        } else {
+            println!("### `{}`  ({} {})", q.name, q.kind, q.location());
+        }
+        for (s, n, t, c) in hits {
+            let doc = if c.doc.is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", first_sentence(&c.doc))
+            };
+            println!("- {s:.2}  [name {n:.2} / types {t:.2}]  {} `{}`  {}{}", c.kind, c.name, c.location(), doc);
+        }
+        println!();
+    }
+    if !any {
+        println!("No lexically similar prior art above {min_score}.");
     }
     Ok(())
 }
