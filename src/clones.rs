@@ -39,7 +39,9 @@ pub fn run_jscpd(root: &Path) -> Result<Option<Vec<TokenClone>>> {
         .arg(&out_dir);
     // Honor the repo's own jscpd config when present; otherwise sane defaults.
     if !root.join(".jscpd.json").exists() {
-        cmd.args(["--min-tokens", "70", "--gitignore", "--ignore"]).arg(
+        // jscpd >=5 respects .gitignore by default (it only offers --no-gitignore),
+        // and rejects the old --gitignore flag outright.
+        cmd.args(["--min-tokens", "70", "--ignore"]).arg(
             "**/node_modules/**,**/target/**,**/dist/**,**/build/**,**/.git/**,**/*.min.js,**/*.json,**/*.md",
         );
         cmd.arg(".");
