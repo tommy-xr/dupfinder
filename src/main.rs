@@ -80,6 +80,10 @@ enum Cmd {
         /// Include test functions as candidates
         #[arg(long)]
         include_tests: bool,
+        /// Audit the WHOLE repo instead of a diff: rank every pair of existing
+        /// fns/types, once each, damped by how distinctive their shared words are
+        #[arg(long)]
+        all: bool,
     },
     /// Duplication review of the current change vs a base ref:
     /// token clones touching the diff + similar existing code per changed function
@@ -119,8 +123,8 @@ fn main() -> Result<()> {
             cmd_similar(&path, threshold, top, min_lines, include_tests)
         }
         Cmd::Clones { path } => cmd_clones(&path),
-        Cmd::Names { path, base, names, top, min_score, include_tests } => {
-            cmd_names(&path, base, &names, top, min_score, include_tests)
+        Cmd::Names { path, base, names, top, min_score, include_tests, all } => {
+            cmd_names(&path, base, &names, top, min_score, include_tests, all)
         }
         Cmd::Review { path, base, top, min_lines } => cmd_review(&path, base, top, min_lines),
         Cmd::InstallSkill { project, dir } => skill::install(project, dir),
@@ -245,6 +249,7 @@ fn cmd_clones(root: &Path) -> Result<()> {
 
 // ---------------------------------------------------------------- names
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_names(
     root: &Path,
     base: Option<String>,
@@ -252,9 +257,13 @@ fn cmd_names(
     top: usize,
     min_score: f32,
     include_tests: bool,
+    audit: bool,
 ) -> Result<()> {
     let ex = extract::extract_dir(root)?;
     let all = names::candidates(&ex);
+    if audit {
+        return audit_repo(&all, top, min_score, include_tests);
+    }
 
     // Query set: explicit --name identifiers, else whatever the diff touches.
     let queries: Vec<names::Candidate> = if !query_names.is_empty() {
@@ -325,6 +334,43 @@ fn cmd_names(
     }
     if !any {
         println!("No lexically similar prior art above {min_score}.");
+    }
+    Ok(())
+}
+
+
+/// Whole-repo audit: every unordered pair once, ranked by IDF-damped score.
+fn audit_repo(all: &[names::Candidate], top: usize, min_score: f32, include_tests: bool) -> Result<()> {
+    let idf = names::Idf::build(all);
+    let pool: Vec<&names::Candidate> = all
+        .iter()
+        .filter(|c| (include_tests || !c.testish) && !c.delegating)
+        .collect();
+
+    let mut pairs: Vec<(f32, f32, f32, &names::Candidate, &names::Candidate)> = Vec::new();
+    for (i, a) in pool.iter().enumerate() {
+        for b in &pool[i + 1..] {
+            // Overlapping ranges in one file = nested item, not a pair.
+            if a.file == b.file && a.start <= b.end && b.start <= a.end {
+                continue;
+            }
+            if names::structurally_forced(a, b) {
+                continue;
+            }
+            let (s, n, t) = names::audit_score(a, b, &idf);
+            if s >= min_score {
+                pairs.push((s, n, t, a, b));
+            }
+        }
+    }
+    pairs.sort_by(|x, y| y.0.total_cmp(&x.0));
+
+    println!("# lexical duplication audit ({} candidates, {} pair(s) over {min_score})\n", pool.len(), pairs.len());
+    println!("Score = name/type Jaccard damped by how distinctive the shared words are, so `new` vs `new` sinks and `get_half_pixel` vs `get_half_pixel` floats. Trait impls that share a method name, or just forward to another method, are excluded. Read both sides before calling anything a duplicate.\n");
+    for (s, n, t, a, b) in pairs.into_iter().take(top) {
+        println!("{s:.2}  [name {n:.2} / types {t:.2}]");
+        println!("      {} `{}`  {}", a.kind, a.name, a.location());
+        println!("      {} `{}`  {}\n", b.kind, b.name, b.location());
     }
     Ok(())
 }
