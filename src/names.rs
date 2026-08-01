@@ -143,6 +143,12 @@ pub struct Candidate {
     pub end: u32,
     pub doc: String,
     pub testish: bool,
+    /// Inside a trait definition or a trait impl — the method name is dictated
+    /// by the trait, not chosen by the author.
+    pub trait_impl: bool,
+    /// Body is just a call to the same name — a trait impl forwarding to an
+    /// inherent method. Lexically identical to its target, semantically empty.
+    pub delegating: bool,
     pub name_tokens: BTreeSet<String>,
     pub type_tokens: BTreeSet<String>,
 }
@@ -164,6 +170,81 @@ pub fn score(a: &Candidate, b: &Candidate) -> (f32, f32, f32) {
     (NAME_WEIGHT * n + TYPE_WEIGHT * t, n, t)
 }
 
+/// A one-line body that is nothing but a call to the same name — `self.foo()`
+/// or `self.inner.foo(x)` inside `fn foo`. Forwarding, not implementation.
+fn is_delegation(name: &str, body: &str) -> bool {
+    // `body` is the whole item, signature included — slice from the opening brace.
+    let inner = body
+        .split_once('{')
+        .map_or("", |(_, rest)| rest)
+        .trim()
+        .trim_end_matches('}')
+        .trim()
+        .trim_end_matches(';')
+        .trim();
+    inner.lines().count() == 1
+        && inner.contains(&format!("{name}("))
+        && inner.ends_with(')')
+        // A single forwarding expression — no control flow, no second statement.
+        && !inner.contains(';')
+        && !["if ", "match ", "let ", "for ", "while "].iter().any(|k| inner.contains(k))
+}
+
+/// How much information the tokens shared by two names carry.
+///
+/// Plain Jaccard says `new` vs `new` is a perfect match — the sets *are* equal.
+/// But a token appearing in hundreds of names says nothing about what the code
+/// does, so an audit drowns in `new`/`read`/`default`. Scaling by normalized IDF
+/// (`ln(N/df) / ln(N)`) pushes ubiquitous matches toward 0 and leaves rare ones
+/// near 1: with 4864 candidates, a token used 500 times scores ~0.27, one used
+/// twice ~0.92.
+pub struct Idf {
+    df: std::collections::HashMap<String, u32>,
+    total: f32,
+}
+
+impl Idf {
+    pub fn build(cands: &[Candidate]) -> Idf {
+        let mut df: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        for c in cands {
+            for t in &c.name_tokens {
+                *df.entry(t.clone()).or_insert(0) += 1;
+            }
+        }
+        Idf { df, total: cands.len().max(2) as f32 }
+    }
+
+    fn token_specificity(&self, tok: &str) -> f32 {
+        let df = *self.df.get(tok).unwrap_or(&1) as f32;
+        (self.total / df.max(1.0)).ln() / self.total.ln()
+    }
+
+    /// Mean specificity of the tokens two names share, in 0.0-1.0.
+    pub fn shared_specificity(&self, a: &BTreeSet<String>, b: &BTreeSet<String>) -> f32 {
+        let shared: Vec<&String> = a.intersection(b).collect();
+        if shared.is_empty() {
+            return 0.0;
+        }
+        let sum: f32 = shared.iter().map(|t| self.token_specificity(t)).sum();
+        (sum / shared.len() as f32).clamp(0.0, 1.0)
+    }
+}
+
+/// Two trait impls sharing a method name prove nothing: the trait dictates the
+/// name, so `impl Display for A::fmt` and `impl Debug for B::fmt` are required
+/// to collide. Excluded from audits — genuine copy-paste *inside* trait impls is
+/// what `clones` is for.
+pub fn structurally_forced(a: &Candidate, b: &Candidate) -> bool {
+    a.trait_impl && b.trait_impl && a.name_tokens == b.name_tokens
+}
+
+/// Audit score: the query-mode score, damped by how distinctive the shared
+/// vocabulary is. `new` vs `new` survives Jaccard but not this.
+pub fn audit_score(a: &Candidate, b: &Candidate, idf: &Idf) -> (f32, f32, f32) {
+    let (raw, n, t) = score(a, b);
+    (raw * idf.shared_specificity(&a.name_tokens, &b.name_tokens), n, t)
+}
+
 pub fn candidates(ex: &Extraction) -> Vec<Candidate> {
     let mut out = Vec::with_capacity(ex.fns.len() + ex.types.len());
     for r in &ex.fns {
@@ -175,6 +256,8 @@ pub fn candidates(ex: &Extraction) -> Vec<Candidate> {
             end: r.end,
             doc: r.doc.clone(),
             testish: r.is_testish(),
+            trait_impl: r.context.contains(" for ") || r.context.contains("trait "),
+            delegating: is_delegation(&r.name, &r.body),
             name_tokens: tokenize(&r.name),
             type_tokens: signature_tokens(&r.sig, &r.name),
         });
@@ -193,6 +276,8 @@ pub fn candidates(ex: &Extraction) -> Vec<Candidate> {
             end: t.start,
             doc: t.doc.clone(),
             testish: false,
+            trait_impl: false,
+            delegating: false,
             name_tokens: tokenize(&t.name),
             type_tokens: BTreeSet::new(),
         });
@@ -210,6 +295,8 @@ pub fn query_from_name(name: &str) -> Candidate {
         end: 0,
         doc: String::new(),
         testish: false,
+        trait_impl: false,
+        delegating: false,
         name_tokens: tokenize(name),
         type_tokens: BTreeSet::new(),
     }
@@ -277,6 +364,31 @@ mod tests {
         // "mission" is part of the fn's own name, so it is not extra evidence.
         assert!(!toks.contains("mission"));
         assert!(!toks.contains("load"));
+    }
+
+    #[test]
+    fn delegation_is_detected_from_full_item_text() {
+        // `body` carries the signature too, so the check must slice at the brace.
+        let fwd = "fn wield(&mut self, id: EntityId) -> Vec<Effect> {\n        self.controller.wield(id)\n    }";
+        assert!(is_delegation("wield", fwd));
+        let inherent = "fn get_half_pixel(&self) -> f32 {\n        self.get_half_pixel()\n    }";
+        assert!(is_delegation("get_half_pixel", inherent));
+        // Real implementation that merely mentions its own name is not delegation.
+        let real = "fn wield(&mut self, id: EntityId) -> Vec<Effect> {\n        let mut effects = Vec::new();\n        effects\n    }";
+        assert!(!is_delegation("wield", real));
+    }
+
+    #[test]
+    fn ubiquitous_tokens_are_damped() {
+        let mut pool: Vec<Candidate> = (0..200).map(|i| query_from_name(&format!("make_thing{i}"))).collect();
+        pool.push(query_from_name("get_half_pixel"));
+        pool.push(query_from_name("get_half_pixel"));
+        let idf = Idf::build(&pool);
+        // "make" is in 200 names; "half"/"pixel" in two.
+        let ubiquitous = idf.shared_specificity(&tokenize("make_thing1"), &tokenize("make_thing2"));
+        let rare = idf.shared_specificity(&tokenize("get_half_pixel"), &tokenize("get_half_pixel"));
+        assert!(rare > ubiquitous, "rare {rare} should outrank ubiquitous {ubiquitous}");
+        assert!(ubiquitous < 0.5, "ubiquitous token should be damped, got {ubiquitous}");
     }
 
     #[test]
