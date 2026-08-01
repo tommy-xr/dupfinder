@@ -5,11 +5,12 @@ Duplication detection and reuse discovery for **Rust**, **TypeScript/JavaScript*
 where the common failure mode is *re-implementing a helper that already exists, written just
 differently enough that token-based clone detectors can't see it*.
 
-Three engines in one CLI:
+Four engines in one CLI:
 
 | Engine | Catches | Command |
 | --- | --- | --- |
 | **API index** | nothing — *prevents*: a greppable summary of every public function/type, so authors (human or LLM) can find the canonical helper before writing a new one | `dupfinder index` |
+| **Name Jaccard** | prior art that *talks* alike — `find_nearest_cell` vs `find_closest_reachable_cell`. Pure string work: no model, no index, milliseconds | `dupfinder names` |
 | **Code embeddings** (jina-embeddings-v2-base-code via [fastembed](https://github.com/Anush008/fastembed-rs)/ONNX, fully local) | semantic duplication — same logic, different names/style | `dupfinder embed` / `similar` / `review` |
 | **[jscpd](https://github.com/kucherenko/jscpd)** (via `npx`, optional) | token-level copy-paste clones | `dupfinder clones` / `review` |
 
@@ -38,6 +39,14 @@ dupfinder similar [DIR] [--threshold 0.9] [--top 40] [--min-lines 6] [--include-
 
 dupfinder clones [DIR]
     # token-level copy-paste clones (jscpd); honors DIR/.jscpd.json if present
+
+dupfinder names [DIR] [--base origin/main] [--name IDENT]... [--top 5] [--min-score 0.3] [--include-tests]
+    # lexical prior art: rank existing fns/types by identifier-token (Jaccard)
+    # similarity to what the change adds. Splits snake/camel/Pascal, drops
+    # stopwords, collapses synonym stems (closest~nearest, fetch~get, build~create),
+    # and scores 0.75*name + 0.25*signature-type overlap.
+    # --name scores a bare identifier with no diff — use it BEFORE writing the
+    # function. No embeddings, so it runs in milliseconds on any repo size.
 
 dupfinder review [DIR] [--base origin/main] [--top 3] [--min-lines 5]
     # review the current change: token clones touching the diff + the most
@@ -75,6 +84,11 @@ installed `dupfinder`.
 - **Query mode** (`review`): scores are *rank*-meaningful, not absolute — a genuine
   re-implementation's top neighbor often scores 0.5–0.7. Judge by reading the neighbor,
   not by the number.
+- **Lexical mode** (`names`): a different scale entirely — 1.00 means "identical token
+  set", which for `location` vs `location` is a duplicate but for `parse_header` vs
+  `header_parse` is just word order. Treat it as a *prefilter*: it ranks what to read,
+  it does not decide. Its blind spot is the mirror of the embeddings' strength — a
+  re-implementation that shares no vocabulary scores 0.00.
 
 ## Language support
 
