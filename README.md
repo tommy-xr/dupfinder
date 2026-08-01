@@ -60,7 +60,7 @@ dupfinder review [DIR] [--base origin/main] [--top 3] [--min-lines 5]
     # origin/main / origin/master / main / master, first that exists.
 
 dupfinder install-skill [--project] [--dir DIR]
-    # install the bundled `review-for-duplicates` Claude Code skill.
+    # install the bundled Claude Code skills (review-for-duplicates, audit-duplicates).
     # default target ~/.claude/skills; --project writes ./.claude/skills;
     # --dir overrides the location. Re-run to update.
 ```
@@ -69,20 +69,25 @@ dupfinder install-skill [--project] [--dir DIR]
 to a reviewer (human or LLM) as evidence — "this changed function closely resembles X;
 should it reuse it?"
 
-## Claude Code skill
+## Claude Code skills
 
-dupfinder bundles a [Claude Code](https://claude.com/claude-code) skill,
-`review-for-duplicates`, that drives `dupfinder review` and turns its output into a
-judged, severity-ranked duplication review. Install it after `cargo install`:
+dupfinder bundles two [Claude Code](https://claude.com/claude-code) skills, split by
+cost so the cheap one can run on every change:
+
+| Skill | Scope | Engines | Cost | When |
+| --- | --- | --- | --- | --- |
+| `review-for-duplicates` | one change | `names --base`, `names --name`, `clones` | seconds, no model | every change, and before writing a new helper |
+| `audit-duplicates` | whole repo | adds `similar` (embeddings) | minutes on a cold repo | only on an explicit request |
+
+Install both after `cargo install`:
 
 ```sh
 dupfinder install-skill              # ~/.claude/skills (all projects)
 dupfinder install-skill --project    # ./.claude/skills (this repo only)
 ```
 
-The skill source lives in [`skills/review-for-duplicates/`](skills/review-for-duplicates/)
-and is embedded in the binary, so `install-skill` always writes the version matching your
-installed `dupfinder`.
+The skill sources live in [`skills/`](skills/) and are embedded in the binary, so
+`install-skill` always writes the versions matching your installed `dupfinder`.
 
 ## Reading similarity numbers
 
