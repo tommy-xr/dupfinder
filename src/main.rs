@@ -1,6 +1,7 @@
 //! dupfinder — duplication detection + reuse discovery for Rust, TypeScript,
-//! and Functor Lang. Three engines: an API index (prevention), local code
-//! embeddings (semantic similarity), and jscpd (token clones).
+//! and Functor Lang. Four engines: an API index (prevention), identifier-token
+//! Jaccard (lexical prior art), local code embeddings (semantic similarity),
+//! and jscpd (token clones).
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -105,7 +106,7 @@ enum Cmd {
         #[arg(long, default_value_t = 5)]
         min_lines: u32,
     },
-    /// Install the bundled `review-for-duplicates` Claude Code skill
+    /// Install the bundled Claude Code skills (review-for-duplicates, audit-duplicates)
     InstallSkill {
         /// Install into ./.claude/skills instead of ~/.claude/skills
         #[arg(long)]
