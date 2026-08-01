@@ -10,6 +10,7 @@ repository = "https://github.com/tommy-xr/dupfinder"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 fastembed = "4"
+globset = "0.4"
 ignore = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
