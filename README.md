@@ -40,13 +40,19 @@ dupfinder similar [DIR] [--threshold 0.9] [--top 40] [--min-lines 6] [--include-
 dupfinder clones [DIR]
     # token-level copy-paste clones (jscpd); honors DIR/.jscpd.json if present
 
-dupfinder names [DIR] [--base origin/main] [--name IDENT]... [--top 5] [--min-score 0.3] [--include-tests]
+dupfinder names [DIR] [--base origin/main] [--name IDENT]... [--all] [--exclude GLOB]...
+              [--top 5] [--min-score 0.3] [--include-tests]
     # lexical prior art: rank existing fns/types by identifier-token (Jaccard)
     # similarity to what the change adds. Splits snake/camel/Pascal, drops
     # stopwords, collapses synonym stems (closest~nearest, fetch~get, build~create),
     # and scores 0.75*name + 0.25*signature-type overlap.
     # --name scores a bare identifier with no diff — use it BEFORE writing the
     # function. No embeddings, so it runs in milliseconds on any repo size.
+    # --all audits the WHOLE repo instead of a diff: every pair ranked once,
+    # damped by how distinctive the shared words are (so `new` vs `new` sinks),
+    # with trait-dictated names and pure forwarding methods excluded.
+    # --exclude skips files by glob, repeatable — 'examples/**' matters for repos
+    # whose examples are deliberately self-contained (functor: 2256 -> 809 pairs).
 
 dupfinder review [DIR] [--base origin/main] [--top 3] [--min-lines 5]
     # review the current change: token clones touching the diff + the most

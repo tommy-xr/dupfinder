@@ -596,6 +596,7 @@ dependencies = [
  "anyhow",
  "clap",
  "fastembed",
+ "globset",
  "ignore",
  "serde",
  "serde_json",

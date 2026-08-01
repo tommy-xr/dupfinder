@@ -2,7 +2,7 @@
 //! and Functor Lang. Three engines: an API index (prevention), local code
 //! embeddings (semantic similarity), and jscpd (token clones).
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -84,6 +84,11 @@ enum Cmd {
         /// fns/types, once each, damped by how distinctive their shared words are
         #[arg(long)]
         all: bool,
+        /// Skip files matching this glob, e.g. 'examples/**' (repeatable).
+        /// Self-contained examples legitimately repeat helpers; excluding them
+        /// is usually the difference between a readable audit and noise.
+        #[arg(long = "exclude")]
+        excludes: Vec<String>,
     },
     /// Duplication review of the current change vs a base ref:
     /// token clones touching the diff + similar existing code per changed function
@@ -123,8 +128,8 @@ fn main() -> Result<()> {
             cmd_similar(&path, threshold, top, min_lines, include_tests)
         }
         Cmd::Clones { path } => cmd_clones(&path),
-        Cmd::Names { path, base, names, top, min_score, include_tests, all } => {
-            cmd_names(&path, base, &names, top, min_score, include_tests, all)
+        Cmd::Names { path, base, names, top, min_score, include_tests, all, excludes } => {
+            cmd_names(&path, base, &names, top, min_score, include_tests, all, &excludes)
         }
         Cmd::Review { path, base, top, min_lines } => cmd_review(&path, base, top, min_lines),
         Cmd::InstallSkill { project, dir } => skill::install(project, dir),
@@ -258,9 +263,16 @@ fn cmd_names(
     min_score: f32,
     include_tests: bool,
     audit: bool,
+    excludes: &[String],
 ) -> Result<()> {
     let ex = extract::extract_dir(root)?;
-    let all = names::candidates(&ex);
+    let mut all = names::candidates(&ex);
+    if !excludes.is_empty() {
+        let before = all.len();
+        let set = build_globs(excludes)?;
+        all.retain(|c| !set.is_match(&c.file));
+        println!("Excluded {} item(s) matching {}\n", before - all.len(), excludes.join(", "));
+    }
     if audit {
         return audit_repo(&all, top, min_score, include_tests);
     }
@@ -338,6 +350,19 @@ fn cmd_names(
     Ok(())
 }
 
+
+/// Compile --exclude globs. Bare `dir/**` also excludes `dir` itself, which is
+/// what people mean by it.
+fn build_globs(patterns: &[String]) -> Result<globset::GlobSet> {
+    let mut b = globset::GlobSetBuilder::new();
+    for p in patterns {
+        b.add(globset::Glob::new(p).with_context(|| format!("bad --exclude glob: {p}"))?);
+        if let Some(stem) = p.strip_suffix("/**") {
+            b.add(globset::Glob::new(stem)?);
+        }
+    }
+    Ok(b.build()?)
+}
 
 /// Whole-repo audit: every unordered pair once, ranked by IDF-damped score.
 fn audit_repo(all: &[names::Candidate], top: usize, min_score: f32, include_tests: bool) -> Result<()> {
@@ -481,4 +506,31 @@ fn cmd_review(root: &Path, base: Option<String>, top: usize, min_lines: u32) -> 
         println!("No changed functions with notable neighbors.\n");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod glob_tests {
+    use super::build_globs;
+
+    #[test]
+    fn dir_glob_also_matches_the_dir_itself() {
+        let set = build_globs(&["examples/**".to_string()]).unwrap();
+        assert!(set.is_match("examples/breakout/game.fun"));
+        // `examples/**` alone does not match a file directly in `examples/`.
+        assert!(set.is_match("examples"));
+        assert!(!set.is_match("functor-lang/src/parser.rs"));
+    }
+
+    #[test]
+    fn multiple_patterns_union() {
+        let set = build_globs(&["site/demos/**".to_string(), "**/*.test.ts".to_string()]).unwrap();
+        assert!(set.is_match("site/demos/mcp-drive.mjs"));
+        assert!(set.is_match("tools/sdk/test/world-aim.test.ts"));
+        assert!(!set.is_match("src/main.rs"));
+    }
+
+    #[test]
+    fn bad_glob_is_an_error_not_a_panic() {
+        assert!(build_globs(&["[unclosed".to_string()]).is_err());
+    }
 }
